@@ -18,6 +18,17 @@ SELECT
         ELSE ''
     END AS [Comment]
 
+UNION ALL
+
+SELECT 
+    '--> Use Platform Settings' AS [Item],
+    CASE 
+        WHEN EXISTS (SELECT * 
+                     FROM tbPlatformConfiguration 
+                     WHERE UsePlatformSettings = 1) THEN 'Enabled'
+        ELSE 'Disabled'
+    END AS [Value], 
+    '' AS [Comment]
 
 UNION ALL
 
@@ -40,6 +51,34 @@ SELECT '--> Size' AS [Item],
         WHEN (SELECT COUNT(*) FROM tbSdkClientAccount WHERE Revoked <> 1) > 7 THEN 'Large'
         WHEN (SELECT COUNT(*) FROM tbSdkClientAccount WHERE Revoked <> 1) BETWEEN 3 AND 7 THEN 'Medium'
         ELSE 'Small' -- Default if both categories are small
+    END AS [Value], '' AS [Comment]
+
+UNION ALL
+
+SELECT 'Domain Information' AS [Item], '' AS [Value], '' AS [Comment]
+
+UNION ALL 
+
+SELECT '--> Number of Domains', CAST(COUNT(DomainId) AS NVARCHAR(50)) AS [Value], ''
+FROM tbDomain d
+WHERE d.Active = 1
+
+UNION ALL
+
+SELECT 
+    '--> Entra ID-Directory Services' AS [Item],
+    CASE 
+        WHEN EXISTS (SELECT * FROM tbDomain WHERE DomainTypeId = 3 AND Active = 1) THEN 'Yes'
+        ELSE 'No' 
+    END AS [Value], '' AS [Comment]
+
+UNION ALL
+
+SELECT 
+    '--> OpenLDAP-Directory Services' AS [Item],
+    CASE 
+        WHEN EXISTS (SELECT * FROM tbDomain WHERE DomainTypeId = 2 AND Active = 1) THEN 'Yes'
+        ELSE 'No' 
     END AS [Value], '' AS [Comment]
 
 UNION ALL
@@ -90,22 +129,6 @@ FROM tbSamlConfiguration sc
 
 UNION ALL
 
-
-SELECT '--> Number of Domains', CAST(COUNT(DomainId) AS NVARCHAR(50)) AS [Value], ''
-FROM tbDomain d
-WHERE d.Active = 1
-
-UNION ALL
-
-SELECT 
-    '--> Entra ID-Directory Services' AS Item,
-    CASE 
-        WHEN EXISTS (SELECT * FROM tbDomain WHERE DomainTypeId = 3 AND Active = 1) THEN 'Yes'
-        ELSE 'No' 
-    END AS Value, '' AS Comment
-
-UNION ALL
-
 SELECT '--> Allow Duplicate Secrets', 
     CAST(CASE 
         WHEN c.AllowDuplicateSecretNames = 0 THEN 'FALSE' 
@@ -152,7 +175,7 @@ WHERE si.Active = 1
 
 UNION ALL
 
-SELECT DISTINCT CONCAT('   Engines in Site ', S.SiteName), 
+SELECT DISTINCT CONCAT('----> Engines in Site ', S.SiteName), 
     CAST(COUNT(EngineId) OVER (PARTITION BY S.SiteName) AS NVARCHAR(50)), ''
 FROM tbEngine E
 JOIN tbSite S ON S.SiteId = E.SiteId
@@ -164,11 +187,18 @@ SELECT 'Users and Groups' AS [Item], '' AS [Value], '' AS [Comment]
 
 UNION ALL
 
+SELECT '--> Number of Active Users in the last 6 months', CAST(COUNT(*) AS NVARCHAR(50)), ''
+FROM tbUser u
+WHERE u.LastLogin >= DATEADD(MONTH, -6, GETDATE())
+
+UNION ALL
+
 SELECT '--> Total Number of Users', CAST(COUNT(UserId) AS NVARCHAR(50)), ''
 FROM tbUser u
 WHERE u.Enabled = 1
 
 UNION ALL
+
 
 SELECT '--> Domain Users', CAST(COUNT(UserId) AS NVARCHAR(50)), ''
 FROM tbUser u
@@ -188,36 +218,59 @@ WHERE u.Enabled = 1 AND u.IsApplicationAccount = 1
 
 UNION ALL
 
-SELECT '--> Local Application Accounts' AS Item, CAST(COUNT(UserId) AS NVARCHAR(50)) AS Value, '' AS Comment
+SELECT '-->   Local Application Accounts' AS Item, CAST(COUNT(UserId) AS NVARCHAR(50)) AS Value, '' AS Comment
 FROM tbUser u WHERE u.Enabled = 1 AND u.IsApplicationAccount = 1 AND u.DomainId IS NULL
 
 UNION ALL
 
-SELECT '--> Domain Application Accounts' AS Item, CAST(COUNT(UserId) AS NVARCHAR(50)) AS Value, '' AS Comment
+SELECT '-->   Domain Application Accounts' AS Item, CAST(COUNT(UserId) AS NVARCHAR(50)) AS Value, '' AS Comment
 FROM tbUser u WHERE u.Enabled = 1 AND u.IsApplicationAccount = 1 AND u.DomainId IS NOT NULL
 
 UNION ALL
 
-SELECT 'Total Numbers of Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
+SELECT '--> Total Numbers of Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
 FROM tbGroup g
 
 UNION ALL
 
-SELECT '--> Active Directory Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
+SELECT '-->   Active Directory Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
 FROM tbGroup g
 WHERE g.DomainId IS NOT NULL
 
 UNION ALL
 
-SELECT '--> Local Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
+SELECT '-->   Local Groups' AS [Item], CAST(COUNT(GroupId) AS NVARCHAR(50)) AS [Value], '' AS [Comment]
 FROM tbGroup g
 WHERE g.DomainId IS NULL
 
 UNION ALL
 
-SELECT '--> Number of Active Users in the last 6 months', CAST(COUNT(*) AS NVARCHAR(50)), ''
-FROM tbUser u
-WHERE u.LastLogin >= DATEADD(MONTH, -6, GETDATE())
+SELECT '-->   Users with custom ownership', cast(count([userid]) as NVARCHAR(50)), ''
+from (
+select distinct userid from (
+SELECT U.UserId
+	,u.username as [ManangedUser]
+	,g.GroupName as [Managed By]
+  FROM [tbEntityOwnerPermission] EOP
+  join tbuser u on u.userid = eop.OwnedEntityId
+  join tbGroup g on eop.GroupId = g.GroupID
+  where roleid =14 
+  and u.Enabled = 1) as result) as result
+
+UNION ALL
+
+SELECT '-->   Groups with custom ownership', cast(count([group id]) as NVARCHAR(50)), ''
+from (
+	select tg.groupid as [group ID]
+		,tg.groupName as [GroupName]
+		,og.groupid as [managed by group ID]
+		,og.GroupName as [Managed by Group Name] 
+	from tbGroupOwnerPermission gop
+		join tbgroup tg on tg.GroupID = gop.OwnedGroupId
+		join tbgroup og on og.GroupID = gop.GroupId
+	where tg.Active =1 and og.Active =1
+) as result
+
 
 UNION ALL
 
@@ -424,17 +477,17 @@ WHERE Active = 1
 UNION ALL
 
 SELECT '--> QuantumLocks', CAST(COUNT(*) AS NVARCHAR(50)), ''
-FROM tbDoubleLock
+FROM tbDoubleLock WHERE active = 1
 
 UNION ALL
 
 SELECT '--> Event Subscriptions', CAST(COUNT(*) AS NVARCHAR(50)), ''
-FROM tbEventSubscription
+FROM tbEventSubscription WHERE active = 1
 
 UNION ALL
 
 SELECT '--> Categorized Lists', CAST(COUNT(*) AS NVARCHAR(50)), ''
-FROM tbCategorizedList
+FROM tbCategorizedList WHERE active = 1
 
 UNION ALL
 
@@ -579,7 +632,7 @@ SELECT '--> SDK Unique Client IPs', CAST(COUNT(DISTINCT IpAddress) AS NVARCHAR(5
 FROM tbSdkClientAccount
 UNION ALL
 
-SELECT 'Priviledge Manager' AS [Item], '' AS [Value], '' AS [Comment]
+SELECT 'Privilege Manager' AS [Item], '' AS [Value], '' AS [Comment]
 
 UNION ALL
 
